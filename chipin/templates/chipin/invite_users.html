@@ -3,11 +3,11 @@
   <h1>Invite a user to {{ group.name }}</h1>
   <form method="post">
     {% csrf_token %}
-    <label for="invited_user_id">Select user</label>
+    <label for="user_id">Select user</label>
     <select name="user_id" id="user_id" required>
       <option value="" disabled selected>-- choose a user --</option>
       {% for u in users_not_in_group %}
-        <option value="{{ user.id }}">{{ user.profile.nickname }}</option>
+        <option value="{{ u.id }}">{{ u.profile.nickname }}</option>
       {% endfor %}
     </select>
     <button type="submit">Create Invite</button>

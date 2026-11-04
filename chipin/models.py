@@ -13,6 +13,7 @@ class Group(models.Model):
     name = models.CharField(max_length=100)
     admin = models.ForeignKey(User, related_name='admin_groups', on_delete=models.CASCADE)
     members = models.ManyToManyField(User, related_name='group_memberships', blank=True)
+    invited_users = models.ManyToManyField(User, related_name='pending_invitations', blank=True)
     def __str__(self):
         return self.name
 
@@ -33,3 +34,17 @@ class Invite(models.Model):
     @property
     def invitee_email(self):
         return (self.invited_user.email or "").strip()
+
+class GroupJoinRequest(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='join_requests')
+    is_approved = models.BooleanField(default=False)
+    
+    # Track approvals and rejections separately
+    approved_votes = models.ManyToManyField(User, related_name='approved_join_requests', blank=True)
+    rejected_votes = models.ManyToManyField(User, related_name='rejected_join_requests', blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def has_user_voted(self, user):
+        return self.approved_votes.filter(id=user.id).exists() or self.rejected_votes.filter(id=user.id).exists()

@@ -7,10 +7,23 @@ from django.conf import settings
 from .models import Group, Invite
 from .forms import GroupCreationForm
 from django.urls import reverse
+from .models import GroupJoinRequest
 
-@login_required(login_url='users:login')
 def home(request):
-    return render(request, "chipin/home.html")
+    # Get all groups where the user has been invited but not accepted the invite
+    pending_invitations = Group.objects.filter(invited_users=request.user)
+    
+    # Get all join requests submitted by the current user
+    user_join_requests = GroupJoinRequest.objects.filter(user=request.user)
+
+    # Get all groups where the user is NOT a member
+    available_groups = Group.objects.exclude(members=request.user)
+
+    return render(request, 'chipin/home.html', { # Pass data to the template
+        'pending_invitations': pending_invitations, 
+        'user_join_requests': user_join_requests, 
+        'available_groups': available_groups  
+    })
 
 @login_required
 def create_group(request):
@@ -42,128 +55,117 @@ def delete_group(request, group_id):
 @login_required
 def invite_users(request, group_id):
     group = get_object_or_404(Group, id=group_id)
-
-    # Only the group admin can create invites
-    if request.user != group.admin:
-        messages.error(request, "Only the group administrator can invite members.")
-        return redirect("chipin:group_detail", group_id=group.id)
-
-    # Users who are not in the group (and aren’t the admin if you wish)
-    users_not_in_group = User.objects.exclude(
-        id__in=group.members.values_list('id', flat=True)
-    )
-
-    if request.method == "POST":
-        try:
-            invited_user_id = int(request.POST.get("invited_user_id", "0"))
-        except ValueError:
-            invited_user_id = 0
-
-        invited_user = users_not_in_group.filter(id=invited_user_id).first()
-        if not invited_user:
-            messages.error(request, "Please select a valid user to invite.")
-            return redirect("chipin:invite_users", group_id=group.id)
-
-        invite, created = Invite.objects.get_or_create(
-            group=group,
-            invited_user=invited_user,
-            defaults={"invited_by": request.user},
-        )
-        if invite.is_expired():
-            invite.expires_at = timezone.now() + timezone.timedelta(days=14)
-            invite.accepted = False
-            invite.save(update_fields=["expires_at", "accepted"])
-
-        return redirect("chipin:web3forms_invite", group_id=group.id, invite_id=invite.id)
-
-    return render(
-        request,
-        "chipin/invite_users.html",
-        {"group": group, "users_not_in_group": users_not_in_group},
-    )
+    users_not_in_group = User.objects.exclude(id__in=group.members.values_list('id', flat=True))
+    if request.method == 'POST':
+        user_id = request.POST.get('user_id')
+        invited_user = get_object_or_404(User, id=user_id)      
+        if invited_user in group.invited_users.all():
+            messages.info(request, f'{invited_user.profile.nickname} has already been invited.')
+        else:
+            group.invited_users.add(invited_user)
+            messages.success(request, f'Invitation sent to {invited_user.profile.nickname}.')
+        return redirect('chipin:group_detail', group_id=group.id)  
+    return render(request, 'chipin/invite_users.html', {
+        'group': group,
+        'users_not_in_group': users_not_in_group
+    })
 
 @login_required
-def web3forms_invite(request, group_id, invite_id):
-    invite = get_object_or_404(Invite, id=invite_id, group_id=group_id)
-    accept_link = invite.accept_url()
-    WEB3FORMS_ACCESS_KEY = getattr(settings, "WEB3FORMS_ACCESS_KEY", "")
-
-    thank_you_url = request.build_absolute_uri(
-            reverse("chipin:invite_sent") + f"?group={invite.group.id}&invite={invite.id}"
-        )
-
-    return render(
-        request,
-        "chipin/web3forms_invite.html",
-        {
-            "group": invite.group,
-            "invite": invite,
-            "accept_link": accept_link,
-            "WEB3FORMS_ACCESS_KEY": WEB3FORMS_ACCESS_KEY,
-            "redirect_url": thank_you_url,
-        },
-    )
-
-def accept_invite(request, token):
-    invite = get_object_or_404(Invite, token=token)
-    if invite.accepted:
-        if getattr(settings, "DEMO_AUTO_ACCEPT_INVITES", False):
-            _auto_login_as_invitee(request, invite)
-        messages.info(request, f"This invitation has already been used for {invite.invited_user.username}.")
-        return redirect("chipin:group_detail", group_id=invite.group.id)
-    if hasattr(invite, "is_expired") and invite.is_expired():
-        messages.error(request, "This invitation has expired.")
-        return redirect("chipin:home")
-    if getattr(settings, "DEMO_AUTO_ACCEPT_INVITES", False):
-        _auto_login_as_invitee(request, invite)
-    group = invite.group
-    group.members.add(invite.invited_user)
-    invite.accepted = True
-    if not hasattr(invite, "used_at"):
-        pass
+def accept_invite(request, group_id):
+    group = get_object_or_404(Group, id=group_id)
+    user_id = request.GET.get('user_id')
+    if user_id:
+        invited_user = get_object_or_404(User, id=user_id)
+        if invited_user in group.members.all():
+            messages.info(request, f'{invited_user.profile.nickname} is already a member of the group "{group.name}".')
+        elif invited_user in group.invited_users.all():
+            group.members.add(invited_user)
+            group.invited_users.remove(invited_user)  # Remove from invited list
+            messages.success(request, f'{invited_user.profile.nickname} has successfully joined the group "{group.name}".')
+        else:
+            messages.error(request, "You are not invited to join this group.")
     else:
-        invite.used_at = timezone.now()
-    invite.save()
-    messages.success(request, f"You have joined {group.name}.")
-    return redirect("chipin:group_detail", group_id=group.id)
-
-def _auto_login_as_invitee(request, invite):
-    user = invite.invited_user
-    backend = None
-    try:
-        backend = settings.AUTHENTICATION_BACKENDS[0]
-    except Exception:
-        backend = "django.contrib.auth.backends.ModelBackend"
-    setattr(user, "backend", backend)
-    login(request, user)
+        messages.error(request, "Invalid invitation link.")  
+    return redirect('chipin:group_detail', group_id=group.id)
 
 @login_required
-def invite_sent(request):
-    group_id = request.GET.get("group")
-    invite_id = request.GET.get("invite")
-    group = get_object_or_404(Group, id=group_id) if group_id else None
-    invite = get_object_or_404(Invite, id=invite_id) if invite_id else None
-    return render(
-        request,
-        "chipin/invite_sent.html",
-        {
-            "group": group,
-            "invite": invite,
-        },
-    )
+def request_to_join_group(request, group_id):
+    group = get_object_or_404(Group, id=group_id)
+    # Check if the user is already a member
+    if request.user in group.members.all():
+        messages.info(request, "You are already a member of this group.")
+        return redirect('chipin:group_detail', group_id=group.id)
+    # Check if the user has already submitted a join request
+    join_request, created = GroupJoinRequest.objects.get_or_create(user=request.user, group=group)
+    if created:
+        messages.success(request, "Your request to join the group has been submitted.")
+    else:
+        messages.info(request, "You have already requested to join this group.")
+    return redirect('chipin:group_detail', group_id=group.id)
 
+@login_required
+def delete_join_request(request, request_id):
+    join_request = get_object_or_404(GroupJoinRequest, id=request_id, user=request.user)
+    # Ensure the logged-in user can only delete their own join requests
+    if join_request.user == request.user:
+        join_request.delete()
+        messages.success(request, "Your join request has been successfully deleted.")
+    else:
+        messages.error(request, "You are not authorised to delete this join request.")
+    return redirect('chipin:home')  
+    
 @login_required
 def leave_group(request, group_id):
     group = get_object_or_404(Group, id=group_id)
+    # Check if the user is a member of the group
+    if request.user in group.members.all():
+        group.members.remove(request.user)  # Remove the user from the group
+        messages.success(request, f'You have left the group {group.name}.')
+    else:
+        messages.error(request, 'You are not a member of this group.') 
+    return redirect('chipin:home')  
 
+@login_required
+def vote_on_join_request(request, group_id, request_id, vote):
+    group = get_object_or_404(Group, id=group_id)
+    join_request = get_object_or_404(GroupJoinRequest, id=request_id) 
+
+    # 1. Verification checks
     if request.user not in group.members.all():
-        messages.error(request, "You’re not a member of this group.")
-        return redirect("chipin:group_detail", group_id=group.id)
+        messages.error(request, "You must be a member of the group to vote.")
+        return redirect('chipin:group_detail', group_id=group.id)  
 
-    if request.user == group.admin:
-        messages.error(request, "Admins can’t leave their own group. Transfer admin or delete the group.")
-        return redirect("chipin:group_detail", group_id=group.id)
+    if join_request.has_user_voted(request.user):
+        messages.info(request, "You have already voted on this request.")
+        return redirect('chipin:group_detail', group_id=group.id)
 
-    group.members.remove(request.user)
-    messages.success(request, f'You left "{group.name}".')
-    return redirect("chipin:home")
+    # 2. Register the vote choice
+    if vote == 'approve':
+        join_request.approved_votes.add(request.user)
+        messages.success(request, "Your approval vote has been recorded.")
+    elif vote == 'reject':
+        join_request.rejected_votes.add(request.user)
+        messages.info(request, "Your rejection vote has been recorded.")
+    else:
+        messages.error(request, "Invalid vote action.")
+        return redirect('chipin:group_detail', group_id=group.id)
+
+    # 3. Evaluate voting status
+    total_members = group.members.count()
+    if total_members > 0:
+        approval_count = join_request.approved_votes.count()
+        rejection_count = join_request.rejected_votes.count()
+
+        # Check if >60% approved
+        if (approval_count / total_members) >= 0.6:
+            join_request.is_approved = True
+            group.members.add(join_request.user)
+            join_request.delete()  # Clean up request after approval
+            messages.success(request, f"{join_request.user.profile.nickname} has been approved and added to the group!")
+
+        # Optional: Check if rejections make >60% approval impossible (e.g. >40% rejected)
+        elif (rejection_count / total_members) > 0.4:
+            join_request.delete()  # Clean up rejected request
+            messages.warning(request, f"Join request for {join_request.user.profile.nickname} was rejected.")
+
+    return redirect('chipin:group_detail', group_id=group.id)

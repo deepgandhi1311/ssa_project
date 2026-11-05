@@ -12,4 +12,10 @@ urlpatterns = [
    path('group/<int:group_id>/request-to-join/', views.request_to_join_group, name='request_to_join_group'),
    path('group/<int:group_id>/leave/', views.leave_group, name='leave_group'),
    path('group/<int:group_id>/request/<int:request_id>/vote/<str:vote>/', views.vote_on_join_request, name='vote_on_join_request'),
+   path('group/<int:group_id>/reject_invite/', views.reject_invite, name='reject_invite'),
+   path('group/<int:group_id>/kick/<int:user_id>/', views.kick_member, name='kick_member'),
+   path('group/<int:group_id>/cancel_invite/<int:user_id>/', views.cancel_invite, name='cancel_invite'),
+   path('group/<int:group_id>/edit/<int:edit_comment_id>/', views.group_detail, name='edit_comment'),
+   path('comment/<int:comment_id>/edit/', views.edit_comment, name='edit_comment'),
+   path('comment/<int:comment_id>/delete/', views.delete_comment, name='delete_comment'),
 ]

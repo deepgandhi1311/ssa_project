@@ -5,25 +5,26 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from django.conf import settings
 from .models import Group, Invite
-from .forms import GroupCreationForm
+from .forms import GroupCreationForm, CommentForm
 from django.urls import reverse
-from .models import GroupJoinRequest
+from .models import GroupJoinRequest, Comment
 
+@login_required
 def home(request):
-    # Get all groups where the user has been invited but not accepted the invite
-    pending_invitations = Group.objects.filter(invited_users=request.user)
-    
-    # Get all join requests submitted by the current user
-    user_join_requests = GroupJoinRequest.objects.filter(user=request.user)
+    user = request.user
+    pending_invitations = user.pending_invitations.all() # Get pending group invitations for the current user
+    user_groups = user.group_memberships.all()  # Get groups the user is a member of
+    user_join_requests = GroupJoinRequest.objects.filter(user=user)  # Get join requests sent by the user
+    available_groups = Group.objects.exclude(members=user).exclude(join_requests__user=user) # Get groups the user is not a member of and the user has not requested to join
+    context = {
+        'pending_invitations': pending_invitations,
+        'user_groups': user_groups,
+        'user_join_requests': user_join_requests,
+        'available_groups': available_groups
+    }
+    return render(request, 'chipin/home.html', context)
 
-    # Get all groups where the user is NOT a member
-    available_groups = Group.objects.exclude(members=request.user)
 
-    return render(request, 'chipin/home.html', { # Pass data to the template
-        'pending_invitations': pending_invitations, 
-        'user_join_requests': user_join_requests, 
-        'available_groups': available_groups  
-    })
 
 @login_required
 def create_group(request):
@@ -38,9 +39,35 @@ def create_group(request):
     return render(request, 'chipin/create_group.html', {'form': form})
 
 @login_required
-def group_detail(request, group_id):
+def group_detail(request, group_id, edit_comment_id=None):
     group = get_object_or_404(Group, id=group_id)
-    return render(request, 'chipin/group_detail.html', {'group': group})
+    comments = group.comments.all().order_by('-created_at')  # Fetch all comments for the group
+    if edit_comment_id: # Fetch the comment to edit, if edit_comment_id is provided
+        comment_to_edit = get_object_or_404(Comment, id=edit_comment_id)
+        if comment_to_edit.user != request.user:
+            return redirect('chipin:group_detail', group_id=group.id)
+    else:
+        comment_to_edit = None
+    if request.method == 'POST':
+        if comment_to_edit: # Editing an existing comment
+            form = CommentForm(request.POST, instance=comment_to_edit)
+        else: # Adding a new comment
+            form = CommentForm(request.POST)
+        if form.is_valid():
+            comment = form.save(commit=False)
+            comment.user = request.user
+            comment.group = group
+            comment.save()
+            return redirect('chipin:group_detail', group_id=group.id)
+    else:
+        form = CommentForm(instance=comment_to_edit) if comment_to_edit else CommentForm()
+    return render(request, 'chipin/group_detail.html', {
+        'group': group,
+        'comments': comments,
+        'form': form,
+        'comment_to_edit': comment_to_edit,
+    })
+
 
 @login_required
 def delete_group(request, group_id):
@@ -173,3 +200,78 @@ def vote_on_join_request(request, group_id, request_id, vote):
             messages.warning(request, f"Join request for {join_request.user.profile.nickname} was rejected.")
 
     return redirect('chipin:group_detail', group_id=group.id)
+
+@login_required
+def reject_invite(request, group_id):
+    group = get_object_or_404(Group, id=group_id)
+    
+    # Query database directly using user ID for exact match
+    if group.invited_users.filter(id=request.user.id).exists():
+        group.invited_users.remove(request.user)
+        messages.success(request, f'You have declined the invitation to join "{group.name}".')
+    else:
+        messages.error(request, 'You do not have a pending invitation for this group.')
+        
+    return redirect('chipin:home')
+
+@login_required
+def kick_member(request, group_id, user_id):
+    group = get_object_or_404(Group, id=group_id)
+    
+    if request.user != group.admin:
+        messages.error(request, "Only the group administrator can kick members.")
+        return redirect('chipin:group_detail', group_id=group.id)
+    
+    user_to_kick = get_object_or_404(User, id=user_id)
+    
+    if user_to_kick == group.admin:
+        messages.error(request, "The administrator cannot be kicked from the group.")
+        return redirect('chipin:group_detail', group_id=group.id)
+
+    if user_to_kick in group.members.all():
+        group.members.remove(user_to_kick)
+        messages.success(request, f'{user_to_kick.profile.nickname} has been removed from the group.')
+    else:
+        messages.error(request, 'That user is not a member of this group.')
+
+    return redirect('chipin:group_detail', group_id=group.id)
+
+@login_required
+def cancel_invite(request, group_id, user_id):
+    group = get_object_or_404(Group, id=group_id)
+    
+    # Only group admins can cancel invites
+    if request.user != group.admin:
+        messages.error(request, "Only the group administrator can cancel invitations.")
+        return redirect('chipin:group_detail', group_id=group.id)
+    
+    user_to_remove = get_object_or_404(User, id=user_id)
+    
+    if user_to_remove in group.invited_users.all():
+        group.invited_users.remove(user_to_remove)
+        messages.success(request, f'Invitation for {user_to_remove.profile.nickname} has been canceled.')
+    else:
+        messages.info(request, f'{user_to_remove.profile.nickname} does not have a pending invitation.')
+        
+    return redirect('chipin:group_detail', group_id=group.id)
+
+@login_required
+def edit_comment(request, comment_id):
+    comment = get_object_or_404(Comment, id=comment_id)
+    if comment.user != request.user:  # Ensure only the comment author can edit
+        return redirect('chipin:group_detail', group_id=comment.group.id)
+    if request.method == 'POST':
+        form = CommentForm(request.POST, instance=comment)
+        if form.is_valid():
+            form.save()
+            return redirect('chipin:group_detail', group_id=comment.group.id)
+    else:
+        form = CommentForm(instance=comment)
+    return render(request, 'chipin/edit_comment.html', {'form': form, 'comment': comment})
+
+@login_required
+def delete_comment(request, comment_id):
+    comment = get_object_or_404(Comment, id=comment_id)
+    if comment.user == request.user or request.user == comment.group.admin:  # Allow author or group admin to delete
+        comment.delete()
+    return redirect('chipin:group_detail', group_id=comment.group.id)

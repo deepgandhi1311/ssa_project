@@ -1,35 +1,138 @@
 {% extends 'chipin/base.html' %}
 {% block title %}{{ group.name }}{% endblock %}
 {% block content %}
-    <h1>{{ group.name }}</h1>
-    <p>Administrator: {{ group.admin.profile.nickname }}</p>
+  <h1>{{ group.name }}</h1>
+  <p>Administrator: {{ group.admin.profile.nickname }}</p>
 
-    <!-- Only display "Invite Users" link to the group administrator -->
-    {% if request.user == group.admin %}
-        <a href="{% url 'chipin:invite_users' group.id %}">Invite Users</a>
-    {% endif %}
+  <!-- Admin actions -->
+  {% if request.user == group.admin %}
+      <a href="{% url 'chipin:invite_users' group.id %}">Invite Users</a>
+  {% endif %}
 
-    <h2>Members</h2>
-    <ul>
-        {% for member in group.members.all %}
-        <li>{{ member.profile.nickname }}</li>
-        {% endfor %}
-    </ul>
+  <h2>Members</h2>
+  <ul>
+    {% for member in group.members.all %}
+      <li>
+        {{ member.profile.nickname }}
+        <!-- Admin can kick members (except themselves) -->
+          {% if request.user == group.admin and member != group.admin %}
+            <a href="{% url 'chipin:kick_member' group.id member.id %}" onclick="return confirm('Are you sure you want to kick this user?');">Kick</a>
+          {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
 
-    <!-- Only show "Request to Join" button for non-members -->
+    <!-- Non-member actions -->
     {% if request.user not in group.members.all %}
+      {% if request.user in group.invited_users.all %}
+        <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin: 10px 0;">
+          <p><strong>You have been invited to join this group!</strong></p>
+          <a href="{% url 'chipin:accept_invite' group.id %}?user_id={{ request.user.id }}">Accept Invitation</a> | 
+          <a href="{% url 'chipin:reject_invite' group.id %}" style="color: red;">Reject Invitation</a>
+        </div>
+      {% else %}
         <a href="{% url 'chipin:request_to_join_group' group.id %}">Request to Join</a>
+      {% endif %}
     {% endif %}
 
-    <!-- Only list Join Requests for groups of which the current user is a member. -->
-    <h2>Join Requests</h2>
-    <ul>
-      {% for request in group.join_requests.all %}
-        <li>{{ request.user.username }} has requested to join.</li>
-        {% if request.user not in group.members.all and request.user != group.admin %}
-          <a href="{% url 'chipin:vote_on_join_request' group.id request.id 'approve' %}">Approve</a>
-          <a href="{% url 'chipin:vote_on_join_request' group.id request.id 'reject' %}">Reject</a>
-        {% endif %}
+    <!-- Displays for group members -->
+    {% if request.user in group.members.all %}
+        <h2>Pending Invitations</h2>
+        <ul>
+            {% for invited_user in group.invited_users.all %}
+            <li>
+              <strong>{{ invited_user.profile.nickname }}</strong> <span style="color: orange;">(Pending)</span>
+              <!-- Admin can revoke pending invitations -->
+              {% if request.user == group.admin %}
+                <a href="{% url 'chipin:cancel_invite' group.id invited_user.id %}" style="color: red;" onclick="return confirm('Cancel this invitation?');">Cancel Invite</a>
+              {% endif %}
+            </li>
+            {% empty %}
+            <li>No pending invitations.</li>
+            {% endfor %}
+        </ul>
+
+        <h2>Join Requests</h2>
+        <ul>
+          {% for join_request in group.join_requests.all %}
+            <li>
+                <strong>{{ join_request.user.profile.nickname }}</strong> has requested to join.
+                
+                <div>
+                    <small><strong>Approved by ({{ join_request.approved_votes.count }}):</strong> 
+                    {% for user in join_request.approved_votes.all %}
+                      {{ user.profile.nickname }}{% if not forloop.last %}, {% endif %}
+                    {% empty %}
+                      None yet
+                    {% endfor %}
+                    </small>
+                </div>
+
+                <div>
+                    <small><strong>Rejected by ({{ join_request.rejected_votes.count }}):</strong> 
+                    {% for user in join_request.rejected_votes.all %}
+                      {{ user.profile.nickname }}{% if not forloop.last %}, {% endif %}
+                    {% empty %}
+                      None yet
+                    {% endfor %}
+                    </small>
+                </div>
+
+                {% if request.user not in join_request.approved_votes.all and request.user not in join_request.rejected_votes.all %}
+                  <a href="{% url 'chipin:vote_on_join_request' group.id join_request.id 'approve' %}">Approve</a> | 
+                  <a href="{% url 'chipin:vote_on_join_request' group.id join_request.id 'reject' %}">Reject</a>
+                {% else %}
+                  <small><em>(You have already voted)</em></small>
+                {% endif %}
+            </li>
+          {% empty %}
+            <li>No active join requests.</li>
+          {% endfor %}
+        </ul>
+    {% endif %}
+  <h2>Group Chat</h2>
+    <!-- Display existing comments -->
+    <div class="comments-section">
+      {% for comment in comments %}
+        <div class="comment">
+          <p><strong>{{ comment.user.profile.nickname }}</strong>: {{ comment.content }}</p>
+          <small>Posted on {{ comment.created_at }}</small>
+          <!-- Allow the comment owner or admin to edit or delete -->
+          {% if comment.user == request.user or request.user == group.admin %}
+            <a href="{% url 'chipin:edit_comment' group.id comment.id %}">Edit</a>
+            <a href="{% url 'chipin:delete_comment' comment.id %}" onclick="return confirm('Are you sure?')">Delete</a>
+          {% endif %}
+        </div>
+      {% empty %}
+        <p>No comments yet. Be the first to comment!</p>
       {% endfor %}
-    </ul>
+    </div>
+    <!-- Comment form (used for both new comments and editing existing comments) -->
+    <h3>{% if comment_to_edit %}Edit Comment{% else %}Add a comment{% endif %}</h3>
+    <form method="POST">
+      {% csrf_token %}
+      <div class="form-group">
+        {{ form.content.errors }}
+        {{ form.content }}
+      </div>
+      <button type="submit">{% if comment_to_edit %}Save Comment{% else %}Post Comment{% endif %}</button>
+    </form>
+
+    <!-- Join Requests: show only to members (including admin) -->
+    {% if request.user in group.members.all %}
+      <h2>Join Requests</h2>
+      <ul>
+        {% for jr in group.join_requests.all %}
+          <li>
+            {{ jr.user.profile.nickname }} has requested to join.
+            {% if jr.user not in group.members.all and jr.user != group.admin %}
+              <a href="{% url 'chipin:vote_on_join_request' group.id jr.id 'approve' %}">Approve</a>
+              <a href="{% url 'chipin:vote_on_join_request' group.id jr.id 'reject' %}">Reject</a>
+            {% endif %}
+          </li>
+        {% empty %}
+          <li>No join requests pending.</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
 {% endblock %}

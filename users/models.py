@@ -18,6 +18,12 @@ def ensure_profile(sender, instance: User, created, **kwargs):
 class Profile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     nickname = models.CharField(max_length=30, unique=True)
+    max_spend = models.DecimalField(max_digits=10, decimal_places=2, default=100.00)  # Max spend for each event
+    balance = models.DecimalField(max_digits=10, decimal_places=2, default=100.00)  # User's current balance
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs) 
 
     def __str__(self):
         return self.user.username

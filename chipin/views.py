@@ -1,3 +1,4 @@
+import profile
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
@@ -9,23 +10,24 @@ from .forms import GroupCreationForm, CommentForm
 from django.urls import reverse
 from .models import GroupJoinRequest, Comment
 from .models import Event
+from .forms import GroupCreationForm, CommentForm, TopUpForm
 
 @login_required
 def home(request):
     user = request.user
-    pending_invitations = user.pending_invitations.all() # Get pending group invitations for the current user
+    pending_invitations = user.pending_invitations.all()  # Get pending group invitations for the current user
     user_groups = user.group_memberships.all()  # Get groups the user is a member of
     user_join_requests = GroupJoinRequest.objects.filter(user=user)  # Get join requests sent by the user
-    available_groups = Group.objects.exclude(members=user).exclude(join_requests__user=user) # Get groups the user is not a member of and the user has not requested to join
+    available_groups = Group.objects.exclude(members=user).exclude(join_requests__user=user)  # Get groups the user is not a member of and has not requested to join
+    
     context = {
         'pending_invitations': pending_invitations,
         'user_groups': user_groups,
         'user_join_requests': user_join_requests,
-        'available_groups': available_groups
+        'available_groups': available_groups,
+        'balance': user.profile.balance,  # Add the user's current balance
     }
     return render(request, 'chipin/home.html', context)
-
-
 
 @login_required
 def create_group(request):
@@ -404,3 +406,23 @@ def delete_event(request, group_id, event_id):
     event.delete()
     messages.success(request, f"The event '{event.name}' has been deleted.")
     return redirect('chipin:group_detail', group_id=group.id)
+
+@login_required
+def top_up_balance(request):
+    profile = request.user.profile
+
+    if request.method == 'POST':
+        form = TopUpForm(request.POST)
+        if form.is_valid():
+            amount = form.cleaned_data['amount']
+            profile.balance += amount
+            profile.save()
+            messages.success(request, f"${amount:.2f} has been added to your balance.")
+            return redirect('chipin:home')
+    else:
+        form = TopUpForm()
+
+    return render(request, 'chipin/top_up.html', {
+        'form': form,
+        'balance': profile.balance
+    })

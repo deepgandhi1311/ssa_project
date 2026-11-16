@@ -31,3 +31,16 @@ class GroupCreationForm(forms.ModelForm):
             group.save()
             group.members.add(self.user)
         return group
+
+class TopUpForm(forms.Form):
+    amount = forms.DecimalField(
+        label="Amount to Add ($)",
+        max_digits=10,
+        decimal_places=2,
+        min_value=0.01,
+        widget=forms.NumberInput(attrs={
+            'step': '0.01',
+            'placeholder': '0.00',
+            'class': 'form-control'
+        })
+    )

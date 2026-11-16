@@ -1,0 +1,17 @@
+{% extends 'chipin/base.html' %}
+{% block title %}Top Up Balance{% endblock %}
+
+{% block content %}
+    <h1>Top Up Your Balance</h1>
+    <p>Current Balance: <strong>${{ balance }}</strong></p>
+
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit" class="btn btn-success">Confirm Top Up</button>
+    </form>
+
+    <p style="margin-top: 1rem;">
+        <a href="{% url 'chipin:home' %}">Cancel and return to Home</a>
+    </p>
+{% endblock %}

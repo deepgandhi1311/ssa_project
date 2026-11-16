@@ -3,6 +3,13 @@
 {% block title %}ChipIn{% endblock %}
 {% block content %}
     <h1>ChipIn</h1>
+
+    <!-- Balance & Top-Up Link -->
+    <div class="balance-section">
+        <h2>Current Balance: ${{ balance }}</h2>
+        <a href="{% url 'chipin:top_up_balance' %}" class="btn btn-primary">Top Up Balance</a>
+    </div>
+
     <h2>Group Invitations</h2>
     <div class="invitation-notification">
         {% if pending_invitations %}

@@ -17,7 +17,7 @@
                 {% for group in pending_invitations %}
                     <li>
                         You have been invited to join <strong>{{ group.name }}</strong>.
-                        <a href="{% url 'chipin:accept_invite' group.id %}?user_id={{ request.user.id }}">Accept</a> | 
+                        <a href="{% url 'chipin:accept_invite' group.id %}">Accept</a> | 
                         <a href="{% url 'chipin:reject_invite' group.id %}" style="color: red;">Reject</a>
                     </li>
                 {% empty %}

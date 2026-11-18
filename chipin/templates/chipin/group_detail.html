@@ -14,7 +14,7 @@
         {% if request.user in group.invited_users.all %}
             <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin: 10px 0;">
                 <p><strong>You have been invited to join this group!</strong></p>
-                <a href="{% url 'chipin:accept_invite' group.id %}?user_id={{ request.user.id }}">Accept Invitation</a> | 
+                <a href="{% url 'chipin:accept_invite' group.id %}">Accept Invitation</a> | 
                 <a href="{% url 'chipin:reject_invite' group.id %}" style="color: red;">Reject Invitation</a>
             </div>
         {% else %}
